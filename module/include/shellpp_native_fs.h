@@ -7,7 +7,7 @@
 #define SHELLPP_FS_NAME_CAP 72u
 #define SHELLPP_FS_DIR_PAGE_ENTRIES 30u
 #define SHELLPP_FS_TEXT_LIMIT 4096u
-#define SHELLPP_FS_EDIT_LIMIT 12288u
+#define SHELLPP_FS_EDIT_LIMIT 11900u
 #define SHELLPP_FS_HEX_PAGE_SIZE 2048u
 #define SHELLPP_FS_VIEW_LIMIT (3u * 1024u * 1024u)
 #define SHELLPP_FS_COPY_CHUNK 4096u
@@ -73,6 +73,14 @@ struct shellpp_cache_report {
     uint8_t root_count;
 };
 
+struct shellpp_fs_atomic_writer {
+    int32_t fd;
+};
+
+struct shellpp_fs_reader {
+    int32_t fd;
+};
+
 int shellpp_fs_validate_path(const char *path);
 int shellpp_fs_parent(const char *path, char *output, uint32_t capacity);
 int shellpp_fs_join(const char *base, const char *name, char *output,
@@ -88,14 +96,33 @@ int shellpp_fs_file_size(const char *path, uint32_t *size, uint8_t *saturated);
 int shellpp_fs_path_type(const char *path, uint8_t *exists, uint8_t *type);
 int shellpp_fs_read_at(const char *path, uint32_t offset, uint8_t *buffer,
     uint32_t capacity, uint32_t *read_count);
-int shellpp_fs_is_editable(const char *path);
-int shellpp_fs_save_atomic(const char *path, const uint8_t *data,
-    uint32_t length);
+int shellpp_fs_reader_open(const char *path,
+    struct shellpp_fs_reader *reader);
+int shellpp_fs_reader_read(struct shellpp_fs_reader *reader,
+    uint8_t *buffer, uint32_t capacity, uint32_t *read_count);
+void shellpp_fs_reader_close(struct shellpp_fs_reader *reader);
+int shellpp_fs_read_cpu(char *text, uint32_t capacity, uint32_t *percent);
+int shellpp_fs_read_memory(char *text, uint32_t capacity, uint32_t *percent);
+int shellpp_fs_atomic_begin(const char *path,
+    struct shellpp_fs_atomic_writer *writer);
+int shellpp_fs_atomic_write(struct shellpp_fs_atomic_writer *writer,
+    const uint8_t *data, uint32_t length);
+int shellpp_fs_atomic_commit(const char *path,
+    struct shellpp_fs_atomic_writer *writer);
+void shellpp_fs_atomic_abort(const char *path,
+    struct shellpp_fs_atomic_writer *writer);
 int shellpp_fs_copy(const char *source, const char *target, uint8_t *scratch,
     uint32_t scratch_size);
 int shellpp_fs_move(const char *source, const char *target, uint8_t *scratch,
     uint32_t scratch_size);
 int shellpp_fs_delete_file(const char *path);
+int shellpp_fs_app_size(const char *package_name, uint32_t *size);
+/* Removes only a directory tree itself. Links are unlinked rather than
+ * traversed, and unsupported directory entries abort the operation. */
+int shellpp_fs_remove_tree(const char *path);
+/* Xiaomi Band 10 Pro quick-app data locations for one validated package
+ * component. This is intentionally narrower than a general recursive delete. */
+int shellpp_fs_delete_app_package(const char *package_name);
 
 int shellpp_fs_cache_status(uint8_t include_logs,
     struct shellpp_cache_report *report);

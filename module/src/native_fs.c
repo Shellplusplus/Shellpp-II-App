@@ -45,6 +45,8 @@ static const char g_system_log_path[] = "/data/log";
 static const char g_offline_log_path[] = "/data/offlinelog";
 static const char g_shellpp_logs_path[] = "/data/shellpp-ii/logs";
 static const char g_icon_path[] = "/data/shellpp-ii/shellpp_ii_icon.bin";
+static const char g_cpu_path[] = "/proc/cpuload";
+static const char g_memory_path[] = "/proc/meminfo";
 
 static uint32_t text_length(const char *text, uint32_t limit) {
     uint32_t length = 0;
@@ -401,31 +403,569 @@ int shellpp_fs_read_at(const char *path, uint32_t offset, uint8_t *buffer,
     return SHELLPP_FS_OK;
 }
 
-static int extension_equal(const char *extension, const char *candidate) {
-    while (*extension && *candidate) {
-        char left = *extension++;
-        char right = *candidate++;
-        if (left >= 'A' && left <= 'Z') left = (char)(left + ('a' - 'A'));
-        if (right >= 'A' && right <= 'Z') right = (char)(right + ('a' - 'A'));
-        if (left != right) return 0;
-    }
-    return *extension == '\0' && *candidate == '\0';
+int shellpp_fs_reader_open(const char *path,
+        struct shellpp_fs_reader *reader) {
+    int32_t fd;
+    if (!reader || shellpp_fs_validate_path(path) != SHELLPP_FS_OK)
+        return SHELLPP_FS_ERR_ARGUMENT;
+    reader->fd = -1;
+    fd = VELA_OPEN(path, VELA_O_RDONLY, 0u);
+    if (fd < 0) return SHELLPP_FS_ERR_OPEN;
+    reader->fd = fd;
+    return SHELLPP_FS_OK;
 }
 
-int shellpp_fs_is_editable(const char *path) {
-    static const char *const extensions[] = {
-        "txt", "json", "log", "lua", "md", "csv",
-        "ini", "conf", "cfg", "xml", "prop", "sh"
-    };
-    const char *name = shellpp_fs_basename(path);
-    const char *extension = 0;
+int shellpp_fs_reader_read(struct shellpp_fs_reader *reader,
+        uint8_t *buffer, uint32_t capacity, uint32_t *read_count) {
+    int32_t result;
+    if (!reader || reader->fd < 0 || !buffer || !capacity || !read_count)
+        return SHELLPP_FS_ERR_ARGUMENT;
+    result = VELA_READ(reader->fd, buffer, capacity);
+    if (result < 0) return SHELLPP_FS_ERR_READ;
+    if ((uint32_t)result > capacity) return SHELLPP_FS_ERR_READ;
+    *read_count = (uint32_t)result;
+    return SHELLPP_FS_OK;
+}
+
+void shellpp_fs_reader_close(struct shellpp_fs_reader *reader) {
+    if (!reader) return;
+    if (reader->fd >= 0) (void)VELA_CLOSE(reader->fd);
+    reader->fd = -1;
+}
+
+static void cpu_set_text(char *text, uint32_t capacity, const char *value) {
+    (void)copy_text(text, capacity, value);
+    if (capacity) text[capacity - 1u] = '\0';
+}
+
+static void cpu_set_percent_text(char *text, uint32_t capacity,
+        uint32_t percent) {
+    char digits[11];
+    uint32_t digit_count = 0u;
     uint32_t index;
-    if (!name) return 0;
-    for (index = 0; name[index]; ++index) if (name[index] == '.') extension = name + index + 1u;
-    if (!extension || !*extension) return 0;
-    for (index = 0; index < sizeof(extensions) / sizeof(extensions[0]); ++index)
-        if (extension_equal(extension, extensions[index])) return 1;
-    return 0;
+    uint32_t cursor = 0u;
+    if (!capacity) return;
+    if (percent > 100u) percent = 100u;
+    do {
+        digits[digit_count++] = (char)('0' + (percent % 10u));
+        percent /= 10u;
+    } while (percent && digit_count < sizeof(digits));
+    if (capacity > 1u) text[cursor++] = 'C';
+    if (cursor + 1u < capacity) text[cursor++] = 'P';
+    if (cursor + 1u < capacity) text[cursor++] = 'U';
+    if (cursor + 1u < capacity) text[cursor++] = ':';
+    for (index = digit_count; index > 0u && cursor + 1u < capacity; --index)
+        text[cursor++] = digits[index - 1u];
+    if (cursor + 1u < capacity) text[cursor++] = '%';
+    text[cursor] = '\0';
+}
+
+int shellpp_fs_read_cpu(char *text, uint32_t capacity, uint32_t *percent) {
+    uint8_t raw[96];
+    uint8_t probe;
+    uint32_t values[2];
+    uint32_t value_count = 0u;
+    uint32_t length = 0u;
+    uint32_t remaining;
+    uint32_t index = 0u;
+    int32_t fd;
+    int32_t read_count;
+    int32_t close_result;
+    if (!text || !capacity) return SHELLPP_FS_ERR_ARGUMENT;
+    text[0] = '\0';
+    if (percent) *percent = 0u;
+    fd = VELA_OPEN(g_cpu_path, VELA_O_RDONLY, 0u);
+    if (fd < 0) {
+        cpu_set_text(text, capacity, "ERR:open");
+        return SHELLPP_FS_ERR_OPEN;
+    }
+    while (length < sizeof(raw) - 1u) {
+        remaining = sizeof(raw) - 1u - length;
+        read_count = VELA_READ(fd, raw + length, remaining);
+        if (read_count < 0 || (uint32_t)read_count > remaining) {
+            (void)VELA_CLOSE(fd);
+            cpu_set_text(text, capacity, "ERR:read");
+            return SHELLPP_FS_ERR_READ;
+        }
+        if (read_count == 0) break;
+        length += (uint32_t)read_count;
+    }
+    if (length == sizeof(raw) - 1u) {
+        read_count = VELA_READ(fd, &probe, 1u);
+        if (read_count < 0 || read_count > 1) {
+            (void)VELA_CLOSE(fd);
+            cpu_set_text(text, capacity, "ERR:read");
+            return SHELLPP_FS_ERR_READ;
+        }
+        if (read_count != 0) {
+            (void)VELA_CLOSE(fd);
+            cpu_set_text(text, capacity, "ERR:truncated");
+            return SHELLPP_FS_ERR_TRUNCATED;
+        }
+    }
+    close_result = VELA_CLOSE(fd);
+    if (close_result < 0) {
+        cpu_set_text(text, capacity, "ERR:close");
+        return SHELLPP_FS_ERR_CLOSE;
+    }
+    if (length == 0u) {
+        cpu_set_text(text, capacity, "ERR:empty");
+        return SHELLPP_FS_OK;
+    }
+    raw[length] = 0u;
+    while (index < length && value_count < 2u) {
+        uint32_t whole = 0u;
+        uint32_t fraction = 0u;
+        uint32_t fraction_digits = 0u;
+        uint8_t seen_dot = 0u;
+        while (index < length &&
+                !((raw[index] >= '0' && raw[index] <= '9') ||
+                    raw[index] == '.')) ++index;
+        if (index >= length) break;
+        while (index < length) {
+            uint8_t value = raw[index];
+            if (value >= '0' && value <= '9') {
+                if (!seen_dot) {
+                    if (whole < 42949u)
+                        whole = whole * 10u + (uint32_t)(value - '0');
+                } else if (fraction_digits < 3u) {
+                    fraction = fraction * 10u + (uint32_t)(value - '0');
+                    ++fraction_digits;
+                }
+                ++index;
+            } else if (value == '.' && !seen_dot) {
+                seen_dot = 1u;
+                ++index;
+            } else {
+                break;
+            }
+        }
+        while (fraction_digits < 3u) {
+            fraction *= 10u;
+            ++fraction_digits;
+        }
+        /* Keep the scaled value at or below UINT32_MAX / 100 before the
+         * two-value percentage calculation below. /proc/cpuload values are
+         * normally tiny; this only protects malformed input. */
+        values[value_count] = whole > 42949u ? 42949672u :
+            whole * 1000u + fraction;
+        if (values[value_count] > 42949672u)
+            values[value_count] = 42949672u;
+        ++value_count;
+    }
+    if (!value_count) {
+        cpu_set_text(text, capacity, "NODATA");
+        return SHELLPP_FS_OK;
+    }
+    {
+        uint32_t result = values[0] / 1000u;
+        if (value_count >= 2u && values[0])
+            result = (values[1] * 100u) / values[0];
+        if (result > 100u) result = 100u;
+        if (percent) *percent = result;
+        cpu_set_percent_text(text, capacity, result);
+    }
+    return SHELLPP_FS_OK;
+}
+
+static int memory_label_equal(const uint8_t *raw, uint32_t length,
+        uint32_t offset, const char *label) {
+    uint32_t index = 0u;
+    while (label[index]) {
+        if (offset + index >= length || raw[offset + index] !=
+                (uint8_t)label[index]) return 0;
+        ++index;
+    }
+    return 1;
+}
+
+static uint32_t memory_find_value(const uint8_t *raw, uint32_t length,
+        const char *label, uint8_t *found) {
+    uint32_t index;
+    if (found) *found = 0u;
+    for (index = 0u; index < length; ++index) {
+        uint32_t cursor;
+        uint32_t value = 0u;
+        uint8_t has_digit = 0u;
+        if (!memory_label_equal(raw, length, index, label)) continue;
+        for (cursor = index; label[cursor - index]; ++cursor) {}
+        while (cursor < length && (raw[cursor] == ' ' ||
+                raw[cursor] == '\t')) ++cursor;
+        while (cursor < length && raw[cursor] >= '0' && raw[cursor] <= '9') {
+            if (value <= 429496729u)
+                value = value * 10u + (uint32_t)(raw[cursor] - '0');
+            has_digit = 1u;
+            ++cursor;
+        }
+        if (has_digit) {
+            if (found) *found = 1u;
+            return value;
+        }
+    }
+    return 0u;
+}
+
+static uint8_t memory_contains_kb(const uint8_t *raw, uint32_t length) {
+    uint32_t index;
+    for (index = 0u; index + 1u < length; ++index) {
+        uint8_t first = raw[index];
+        uint8_t second = raw[index + 1u];
+        if ((first == 'K' || first == 'k') &&
+                (second == 'B' || second == 'b')) return 1u;
+    }
+    return 0u;
+}
+
+static uint32_t memory_next_number(const uint8_t *raw, uint32_t length,
+        uint32_t *cursor, uint8_t *found) {
+    uint32_t value = 0u;
+    if (found) *found = 0u;
+    while (*cursor < length && (raw[*cursor] < '0' ||
+            raw[*cursor] > '9')) ++*cursor;
+    while (*cursor < length && raw[*cursor] >= '0' && raw[*cursor] <= '9') {
+        if (value <= 429496729u)
+            value = value * 10u + (uint32_t)(raw[*cursor] - '0');
+        if (found) *found = 1u;
+        ++*cursor;
+    }
+    return value;
+}
+
+static uint32_t memory_next_line_number(const uint8_t *raw, uint32_t end,
+        uint32_t *cursor, uint8_t *found) {
+    uint32_t value = 0u;
+    if (found) *found = 0u;
+    while (*cursor < end && (raw[*cursor] < '0' ||
+            raw[*cursor] > '9')) ++*cursor;
+    while (*cursor < end && raw[*cursor] >= '0' && raw[*cursor] <= '9') {
+        if (value <= 429496729u)
+            value = value * 10u + (uint32_t)(raw[*cursor] - '0');
+        if (found) *found = 1u;
+        ++*cursor;
+    }
+    return value;
+}
+
+static uint8_t memory_find_umem(const uint8_t *raw, uint32_t length,
+        uint32_t *total, uint32_t *used, uint32_t *free_bytes) {
+    uint32_t start = 0u;
+    while (start < length) {
+        uint32_t end = start;
+        uint32_t cursor;
+        uint32_t index;
+        uint8_t has_a;
+        uint8_t has_b;
+        uint8_t has_c;
+        while (end < length && raw[end] != '\n' && raw[end] != '\r') ++end;
+        for (index = start; index + 4u <= end; ++index) {
+            if (!memory_label_equal(raw, length, index, "Umem")) continue;
+            /* Firmware 3.101.036 prints the allocator name at the end of
+             * its statistics row: "total used free ... Umem".  Lua
+             * intentionally parses all numbers on that line; start at the
+             * line head here too, rather than after the Umem label. */
+            cursor = start;
+            *total = memory_next_line_number(raw, end, &cursor, &has_a);
+            *used = memory_next_line_number(raw, end, &cursor, &has_b);
+            *free_bytes = memory_next_line_number(raw, end, &cursor, &has_c);
+            if (has_a && has_b && has_c) return 1u;
+        }
+        while (end < length && (raw[end] == '\n' || raw[end] == '\r')) ++end;
+        start = end;
+    }
+    /* Shell++ Lua next scans all numeric fields for a NuttX-style
+     * total/used/free triple.  It deliberately does this even when standard
+     * MemTotal fields exist, because Xiaomi's allocator report may be a
+     * separate table rather than a literal "Umem:" line. */
+    {
+        uint32_t scan = 0u;
+        uint8_t has_a;
+        uint8_t has_b;
+        uint8_t has_c;
+        while (scan < length) {
+            uint32_t a = memory_next_number(raw, length, &scan, &has_a);
+            uint32_t b = memory_next_number(raw, length, &scan, &has_b);
+            uint32_t c = memory_next_number(raw, length, &scan, &has_c);
+            if (!has_a || !has_b || !has_c) break;
+            if (a >= 1000u && b <= a && c <= a) {
+                *total = a;
+                *used = b;
+                *free_bytes = c;
+                return 1u;
+            }
+        }
+    }
+    return 0u;
+}
+
+static void memory_append_unsigned(char **cursor, const char *end,
+        uint32_t value) {
+    char digits[11];
+    uint32_t count = 0u;
+    do {
+        digits[count++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    } while (value && count < sizeof(digits));
+    while (count && *cursor < end) *(*cursor)++ = digits[--count];
+}
+
+static void memory_append_text(char **cursor, const char *end,
+        const char *text) {
+    while (*text && *cursor < end) *(*cursor)++ = *text++;
+}
+
+static void memory_append_kb(char **cursor, const char *end, uint32_t kb) {
+    if (kb >= 1024u) {
+        uint32_t whole = kb / 1024u;
+        uint32_t tenths = ((kb % 1024u) * 10u) / 1024u;
+        memory_append_unsigned(cursor, end, whole);
+        if (*cursor < end) *(*cursor)++ = '.';
+        memory_append_unsigned(cursor, end, tenths);
+        memory_append_text(cursor, end, "MB");
+    } else {
+        memory_append_unsigned(cursor, end, kb);
+        memory_append_text(cursor, end, "KB");
+    }
+}
+
+static void memory_set_unavailable(char *text, uint32_t capacity) {
+    cpu_set_text(text, capacity, "MEM:N/A");
+}
+
+/* Read the live allocator table incrementally. Keep only the current line's
+ * first three numbers and the Umem match state. */
+static int memory_read_live_umem(uint32_t *total, uint32_t *used,
+        uint32_t *free_bytes) {
+    uint8_t chunk[96];
+    uint32_t numbers[3];
+    uint32_t number_value = 0u;
+    uint32_t number_count = 0u;
+    uint8_t number_active = 0u;
+    uint8_t umem_state = 0u;
+    int32_t fd = VELA_OPEN(g_memory_path, VELA_O_RDONLY, 0u);
+    if (fd < 0) return -1;
+    for (;;) {
+        int32_t count = VELA_READ(fd, chunk, sizeof(chunk));
+        uint32_t index;
+        if (count < 0) { (void)VELA_CLOSE(fd); return -1; }
+        if (count == 0) break;
+        for (index = 0u; index < (uint32_t)count; ++index) {
+            uint8_t value = chunk[index];
+            if (value == '\n' || value == '\r') {
+                if (number_active && number_count < 3u)
+                    numbers[number_count++] = number_value;
+                if (umem_state == 4u && number_count >= 3u) {
+                    *total = numbers[0];
+                    *used = numbers[1];
+                    *free_bytes = numbers[2];
+                    (void)VELA_CLOSE(fd);
+                    return 1;
+                }
+                number_value = 0u;
+                number_count = 0u;
+                number_active = 0u;
+                umem_state = 0u;
+            } else {
+                if (value >= '0' && value <= '9') {
+                    if (!number_active) {
+                        number_active = 1u;
+                        number_value = 0u;
+                    }
+                    if (number_value <= 429496729u)
+                        number_value = number_value * 10u +
+                            (uint32_t)(value - '0');
+                } else if (number_active) {
+                    if (number_count < 3u) numbers[number_count++] = number_value;
+                    number_value = 0u;
+                    number_active = 0u;
+                }
+                if (umem_state == 0u && value == 'U') umem_state = 1u;
+                else if (umem_state == 1u && value == 'm') umem_state = 2u;
+                else if (umem_state == 2u && value == 'e') umem_state = 3u;
+                else if (umem_state == 3u && value == 'm') umem_state = 4u;
+                else if (value == 'U') umem_state = 1u;
+                else if (value != ' ' && value != '\t') umem_state = 0u;
+            }
+        }
+    }
+    if (number_active && number_count < 3u)
+        numbers[number_count++] = number_value;
+    if (umem_state == 4u && number_count >= 3u) {
+        *total = numbers[0];
+        *used = numbers[1];
+        *free_bytes = numbers[2];
+        (void)VELA_CLOSE(fd);
+        return 1;
+    }
+    return VELA_CLOSE(fd) < 0 ? -1 : 0;
+}
+
+int shellpp_fs_read_memory(char *text, uint32_t capacity, uint32_t *percent) {
+    uint8_t raw[512];
+    uint8_t probe;
+    uint8_t found_total;
+    uint8_t found_free;
+    uint8_t found_available;
+    uint8_t unit_is_kb;
+    uint32_t total;
+    uint32_t free_bytes;
+    uint32_t available;
+    uint32_t buffers;
+    uint32_t cached;
+    uint32_t used = 0u;
+    uint32_t nuttx_total = 0u;
+    uint32_t nuttx_used = 0u;
+    uint32_t nuttx_free = 0u;
+    uint8_t found_used = 0u;
+    uint8_t found_nuttx;
+    uint32_t result;
+    uint32_t length = 0u;
+    uint32_t remaining;
+    int32_t fd;
+    int32_t read_count;
+    int32_t close_result;
+    char *cursor;
+    char *end;
+    if (!text || !capacity) return SHELLPP_FS_ERR_ARGUMENT;
+    text[0] = '\0';
+    if (percent) *percent = 0u;
+    /* Xiaomi 3.101.036 exposes the allocator's authoritative live values on
+     * the `Umem` row.  This branch scans the complete current stream every
+     * call; it has no cached sample or hard-coded statistic. */
+    result = (uint32_t)memory_read_live_umem(&nuttx_total, &nuttx_used,
+        &nuttx_free);
+    if (result == 1u && nuttx_total && nuttx_used <= nuttx_total) {
+        total = nuttx_total / 1024u;
+        used = nuttx_used / 1024u;
+        result = total ? (used * 100u) / total : 0u;
+        if (result > 100u) result = 100u;
+        if (percent) *percent = result;
+        cursor = text;
+        end = text + capacity - 1u;
+        memory_append_kb(&cursor, end, used);
+        if (cursor < end) *cursor++ = '/';
+        memory_append_kb(&cursor, end, total);
+        if (cursor < end) *cursor++ = ' ';
+        memory_append_unsigned(&cursor, end, result);
+        if (cursor < end) *cursor++ = '%';
+        *cursor = '\0';
+        return SHELLPP_FS_OK;
+    }
+    fd = VELA_OPEN(g_memory_path, VELA_O_RDONLY, 0u);
+    if (fd < 0) {
+        memory_set_unavailable(text, capacity);
+        return SHELLPP_FS_ERR_OPEN;
+    }
+    while (length < sizeof(raw) - 1u) {
+        remaining = sizeof(raw) - 1u - length;
+        read_count = VELA_READ(fd, raw + length, remaining);
+        if (read_count < 0 || (uint32_t)read_count > remaining) {
+            (void)VELA_CLOSE(fd);
+            memory_set_unavailable(text, capacity);
+            return SHELLPP_FS_ERR_READ;
+        }
+        if (read_count == 0) break;
+        length += (uint32_t)read_count;
+    }
+    if (length == sizeof(raw) - 1u) {
+        read_count = VELA_READ(fd, &probe, 1u);
+        if (read_count != 0) {
+            (void)VELA_CLOSE(fd);
+            memory_set_unavailable(text, capacity);
+            return SHELLPP_FS_ERR_TRUNCATED;
+        }
+    }
+    close_result = VELA_CLOSE(fd);
+    if (close_result < 0) {
+        memory_set_unavailable(text, capacity);
+        return SHELLPP_FS_ERR_CLOSE;
+    }
+    if (!length) {
+        memory_set_unavailable(text, capacity);
+        return SHELLPP_FS_OK;
+    }
+    unit_is_kb = memory_contains_kb(raw, length);
+    total = memory_find_value(raw, length, "MemTotal:", &found_total);
+    if (!found_total) total = memory_find_value(raw, length, "Total:",
+        &found_total);
+    free_bytes = memory_find_value(raw, length, "MemFree:", &found_free);
+    if (!found_free) free_bytes = memory_find_value(raw, length, "Free:",
+        &found_free);
+    available = memory_find_value(raw, length, "MemAvailable:",
+        &found_available);
+    buffers = memory_find_value(raw, length, "Buffers:", 0);
+    cached = memory_find_value(raw, length, "Cached:", 0);
+    /* This matches Shell++ Lua's parseNuttXMemoryInfo(): on Xiaomi's NuttX
+     * builds the Umem line carries the allocator's authoritative used value. */
+    found_nuttx = memory_find_umem(raw, length, &nuttx_total, &nuttx_used,
+        &nuttx_free);
+    if (!found_total && found_nuttx) {
+        total = nuttx_total;
+        free_bytes = nuttx_free;
+        available = nuttx_free;
+        found_total = 1u;
+        found_free = 1u;
+        found_available = 1u;
+    }
+    if (!found_total && !found_nuttx) {
+        uint32_t scan = 0u;
+        uint8_t have_a;
+        uint8_t have_b;
+        uint8_t have_c;
+        while (scan < length) {
+            uint32_t a = memory_next_number(raw, length, &scan, &have_a);
+            uint32_t b = memory_next_number(raw, length, &scan, &have_b);
+            uint32_t c = memory_next_number(raw, length, &scan, &have_c);
+            if (!have_a || !have_b || !have_c) break;
+            if (a >= 1000u && b <= a && c <= a) {
+                total = a;
+                free_bytes = c;
+                available = c;
+                used = b;
+                found_used = 1u;
+                found_total = 1u;
+                found_free = 1u;
+                found_available = 1u;
+                break;
+            }
+        }
+    }
+    if (!found_total || !total) {
+        memory_set_unavailable(text, capacity);
+        return SHELLPP_FS_OK;
+    }
+    if (!unit_is_kb) {
+        total /= 1024u;
+        free_bytes /= 1024u;
+        available /= 1024u;
+        buffers /= 1024u;
+        cached /= 1024u;
+        if (found_nuttx) {
+            nuttx_used /= 1024u;
+            nuttx_free /= 1024u;
+        }
+    }
+    if (!found_available) {
+        available = free_bytes;
+        if (available <= 4294967295u - buffers) available += buffers;
+        if (available <= 4294967295u - cached) available += cached;
+    }
+    if (available > total) available = total;
+    if (found_nuttx && nuttx_used) used = nuttx_used;
+    else if (!found_used) used = total - available;
+    if (used > total) used = total;
+    result = total ? (used * 100u) / total : 0u;
+    if (result > 100u) result = 100u;
+    if (percent) *percent = result;
+    cursor = text;
+    end = text + capacity - 1u;
+    memory_append_kb(&cursor, end, used);
+    if (cursor < end) *cursor++ = '/';
+    memory_append_kb(&cursor, end, total);
+    if (cursor < end) *cursor++ = ' ';
+    memory_append_unsigned(&cursor, end, result);
+    if (cursor < end) *cursor++ = '%';
+    *cursor = '\0';
+    return SHELLPP_FS_OK;
 }
 
 static int write_all(int32_t fd, const uint8_t *data, uint32_t length) {
@@ -450,27 +990,53 @@ static int make_temp_path(const char *path) {
     return SHELLPP_FS_OK;
 }
 
-int shellpp_fs_save_atomic(const char *path, const uint8_t *data,
-        uint32_t length) {
+int shellpp_fs_atomic_begin(const char *path,
+        struct shellpp_fs_atomic_writer *writer) {
     int32_t fd;
-    int result;
-    if (shellpp_fs_validate_path(path) != SHELLPP_FS_OK || (!data && length))
+    if (!writer || shellpp_fs_validate_path(path) != SHELLPP_FS_OK)
         return SHELLPP_FS_ERR_ARGUMENT;
+    writer->fd = -1;
     if (make_temp_path(path) != SHELLPP_FS_OK) return SHELLPP_FS_ERR_PATH;
     fd = VELA_OPEN(g_work_path, VELA_O_WRONLY | VELA_O_CREAT | VELA_O_TRUNC,
         0666u);
     if (fd < 0) return SHELLPP_FS_ERR_OPEN;
-    result = write_all(fd, data, length);
-    if (VELA_CLOSE(fd) < 0 && result == SHELLPP_FS_OK) result = SHELLPP_FS_ERR_CLOSE;
-    if (result != SHELLPP_FS_OK) {
-        (void)VELA_UNLINK(g_work_path);
-        return result;
-    }
-    if (VELA_RENAME(g_work_path, path) < 0) {
-        (void)VELA_UNLINK(g_work_path);
-        return SHELLPP_FS_ERR_RENAME;
-    }
+    writer->fd = fd;
     return SHELLPP_FS_OK;
+}
+
+int shellpp_fs_atomic_write(struct shellpp_fs_atomic_writer *writer,
+        const uint8_t *data, uint32_t length) {
+    if (!writer || writer->fd < 0 || (!data && length))
+        return SHELLPP_FS_ERR_ARGUMENT;
+    return length ? write_all(writer->fd, data, length) : SHELLPP_FS_OK;
+}
+
+int shellpp_fs_atomic_commit(const char *path,
+        struct shellpp_fs_atomic_writer *writer) {
+    int result = SHELLPP_FS_OK;
+    if (!writer || writer->fd < 0 ||
+            shellpp_fs_validate_path(path) != SHELLPP_FS_OK)
+        return SHELLPP_FS_ERR_ARGUMENT;
+    /* Other filesystem reads use g_work_path as scratch while the stream is
+     * being produced. Recreate this writer's deterministic temporary path
+     * immediately before the final rename. */
+    if (make_temp_path(path) != SHELLPP_FS_OK) return SHELLPP_FS_ERR_PATH;
+    if (VELA_CLOSE(writer->fd) < 0) result = SHELLPP_FS_ERR_CLOSE;
+    writer->fd = -1;
+    if (result == SHELLPP_FS_OK && VELA_RENAME(g_work_path, path) < 0)
+        result = SHELLPP_FS_ERR_RENAME;
+    if (result != SHELLPP_FS_OK) (void)VELA_UNLINK(g_work_path);
+    return result;
+}
+
+void shellpp_fs_atomic_abort(const char *path,
+        struct shellpp_fs_atomic_writer *writer) {
+    if (!writer) return;
+    if (writer->fd >= 0) (void)VELA_CLOSE(writer->fd);
+    writer->fd = -1;
+    if (shellpp_fs_validate_path(path) == SHELLPP_FS_OK &&
+            make_temp_path(path) == SHELLPP_FS_OK)
+        (void)VELA_UNLINK(g_work_path);
 }
 
 int shellpp_fs_copy(const char *source, const char *target, uint8_t *scratch,
@@ -551,6 +1117,206 @@ int shellpp_fs_delete_file(const char *path) {
     if (!exists || (type != VELA_DT_REG && type != VELA_DT_LNK))
         return SHELLPP_FS_ERR_UNSAFE_TYPE;
     return VELA_UNLINK(path) == 0 ? SHELLPP_FS_OK : SHELLPP_FS_ERR_DELETE;
+}
+
+static int remove_tree_walk(uint32_t path_length, uint32_t depth) {
+    void *directory;
+    uint8_t *raw;
+    int result = SHELLPP_FS_OK;
+    if (depth > WALK_DEPTH_LIMIT) return SHELLPP_FS_ERR_PATH;
+    directory = VELA_OPENDIR(g_work_path);
+    if (!directory) return SHELLPP_FS_ERR_DIRECTORY;
+    while ((raw = VELA_READDIR(directory)) != 0) {
+        const char *name = (const char *)(raw + 1u);
+        uint32_t name_length = text_length(name, SHELLPP_FS_NAME_CAP);
+        uint32_t separator = path_length > 1u ? 1u : 0u;
+        uint32_t child_length;
+        int child_result;
+        if (name_length == 0u || name_length >= SHELLPP_FS_NAME_CAP ||
+                (name_length == 1u && name[0] == '.') ||
+                (name_length == 2u && name[0] == '.' && name[1] == '.'))
+            continue;
+        child_length = path_length + separator + name_length;
+        if (child_length + 1u > sizeof(g_work_path)) {
+            result = SHELLPP_FS_ERR_PATH;
+            continue;
+        }
+        if (separator) g_work_path[path_length] = '/';
+        for (uint32_t index = 0u; index < name_length; ++index)
+            g_work_path[path_length + separator + index] = name[index];
+        g_work_path[child_length] = '\0';
+        if (raw[0] == VELA_DT_DIR) {
+            child_result = remove_tree_walk(child_length, depth + 1u);
+            if (child_result != SHELLPP_FS_OK) result = child_result;
+            g_work_path[child_length] = '\0';
+            if (child_result == SHELLPP_FS_OK && VELA_RMDIR(g_work_path) < 0)
+                result = SHELLPP_FS_ERR_DELETE;
+        } else if (raw[0] == VELA_DT_REG || raw[0] == VELA_DT_LNK) {
+            if (VELA_UNLINK(g_work_path) < 0) result = SHELLPP_FS_ERR_DELETE;
+        } else {
+            /* Device nodes and unknown types are never removed implicitly. */
+            result = SHELLPP_FS_ERR_UNSAFE_TYPE;
+        }
+        g_work_path[path_length] = '\0';
+    }
+    if (VELA_CLOSEDIR(directory) < 0 && result == SHELLPP_FS_OK)
+        result = SHELLPP_FS_ERR_CLOSE;
+    return result;
+}
+
+int shellpp_fs_remove_tree(const char *path) {
+    uint8_t exists;
+    uint8_t type;
+    uint32_t length;
+    int result;
+    if (shellpp_fs_validate_path(path) != SHELLPP_FS_OK)
+        return SHELLPP_FS_ERR_PATH;
+    result = shellpp_fs_path_type(path, &exists, &type);
+    if (result != SHELLPP_FS_OK) return result;
+    if (!exists) return SHELLPP_FS_OK;
+    if (type != VELA_DT_DIR) return SHELLPP_FS_ERR_UNSAFE_TYPE;
+    if (copy_text(g_work_path, sizeof(g_work_path), path) != SHELLPP_FS_OK)
+        return SHELLPP_FS_ERR_PATH;
+    length = text_length(g_work_path, sizeof(g_work_path));
+    result = remove_tree_walk(length, 0u);
+    if (result != SHELLPP_FS_OK) return result;
+    return VELA_RMDIR(g_work_path) == 0 ? SHELLPP_FS_OK :
+        SHELLPP_FS_ERR_DELETE;
+}
+
+static uint8_t app_package_component_valid(const char *package_name) {
+    uint32_t index;
+    uint32_t length;
+    if (!package_name) return 0u;
+    length = text_length(package_name, SHELLPP_FS_NAME_CAP);
+    if (!length || length >= SHELLPP_FS_NAME_CAP) return 0u;
+    for (index = 0u; index < length; ++index) {
+        uint8_t value = (uint8_t)package_name[index];
+        if (!((value >= 'a' && value <= 'z') ||
+                (value >= 'A' && value <= 'Z') ||
+                (value >= '0' && value <= '9') || value == '.' ||
+                value == '_' || value == '-')) return 0u;
+    }
+    return 1u;
+}
+
+static void add_saturated(uint32_t *value, uint32_t amount);
+
+static int measure_directory_walk(uint32_t path_length, uint32_t depth,
+        uint32_t *total) {
+    void *directory;
+    uint8_t *raw;
+    int result = SHELLPP_FS_OK;
+    if (depth > WALK_DEPTH_LIMIT || !total)
+        return SHELLPP_FS_ERR_PATH;
+    directory = VELA_OPENDIR(g_work_path);
+    if (!directory) return SHELLPP_FS_ERR_DIRECTORY;
+    while ((raw = VELA_READDIR(directory)) != 0) {
+        const char *name = (const char *)(raw + 1u);
+        uint32_t name_length = text_length(name, SHELLPP_FS_NAME_CAP);
+        uint32_t child_length;
+        uint32_t size;
+        if (!name_length || name_length >= SHELLPP_FS_NAME_CAP ||
+                (name_length == 1u && name[0] == '.') ||
+                (name_length == 2u && name[0] == '.' && name[1] == '.'))
+            continue;
+        child_length = path_length + (path_length > 1u ? 1u : 0u) +
+            name_length;
+        if (child_length + 1u > sizeof(g_work_path)) {
+            result = SHELLPP_FS_ERR_PATH;
+            continue;
+        }
+        if (path_length > 1u) g_work_path[path_length] = '/';
+        for (uint32_t index = 0u; index < name_length; ++index)
+            g_work_path[path_length + (path_length > 1u ? 1u : 0u) + index] =
+                name[index];
+        g_work_path[child_length] = '\0';
+        if (raw[0] == VELA_DT_DIR) {
+            if (measure_directory_walk(child_length, depth + 1u, total) !=
+                    SHELLPP_FS_OK)
+                result = SHELLPP_FS_ERR_DIRECTORY;
+        } else if (raw[0] == VELA_DT_REG) {
+            if (shellpp_fs_file_size(g_work_path, &size, 0u) ==
+                    SHELLPP_FS_OK)
+                add_saturated(total, size);
+            else
+                result = SHELLPP_FS_ERR_READ;
+        }
+        g_work_path[path_length] = '\0';
+    }
+    if (VELA_CLOSEDIR(directory) < 0 && result == SHELLPP_FS_OK)
+        result = SHELLPP_FS_ERR_CLOSE;
+    return result;
+}
+
+int shellpp_fs_app_size(const char *package_name, uint32_t *size) {
+    static const char *const roots[] = {
+        "/data/app", "/data/quickapp/system", "/data/quickapp/files"
+    };
+    char path[SHELLPP_FS_PATH_CAP];
+    uint32_t index;
+    int result = SHELLPP_FS_OK;
+    if (!size || !app_package_component_valid(package_name))
+        return SHELLPP_FS_ERR_PATH;
+    *size = 0u;
+    for (index = 0u; index < sizeof(roots) / sizeof(roots[0]); ++index) {
+        uint8_t exists;
+        uint8_t type;
+        int current = shellpp_fs_path_type(roots[index], &exists, &type);
+        uint32_t path_length;
+        if (current != SHELLPP_FS_OK) {
+            result = current;
+            continue;
+        }
+        if (!exists) continue;
+        if (type != VELA_DT_DIR) { result = SHELLPP_FS_ERR_UNSAFE_TYPE; continue; }
+        if (shellpp_fs_join(roots[index], package_name, path, sizeof(path)) !=
+                SHELLPP_FS_OK) return SHELLPP_FS_ERR_PATH;
+        current = shellpp_fs_path_type(path, &exists, &type);
+        if (current != SHELLPP_FS_OK) { result = current; continue; }
+        if (!exists) continue;
+        if (type != VELA_DT_DIR) { result = SHELLPP_FS_ERR_UNSAFE_TYPE; continue; }
+        if (copy_text(g_work_path, sizeof(g_work_path), path) != SHELLPP_FS_OK)
+            return SHELLPP_FS_ERR_PATH;
+        path_length = text_length(g_work_path, sizeof(g_work_path));
+        current = measure_directory_walk(path_length, 0u, size);
+        if (current != SHELLPP_FS_OK) result = current;
+    }
+    return result;
+}
+
+int shellpp_fs_delete_app_package(const char *package_name) {
+    static const char *const roots[] = {
+        "/data/app",
+        "/data/quickapp/system",
+        "/data/cache",
+        "/data/files",
+        "/data/mass",
+    };
+    char path[SHELLPP_FS_PATH_CAP];
+    uint32_t index;
+    int result = SHELLPP_FS_OK;
+    if (!app_package_component_valid(package_name)) return SHELLPP_FS_ERR_PATH;
+    for (index = 0u; index < sizeof(roots) / sizeof(roots[0]); ++index) {
+        int current;
+        uint8_t exists;
+        uint8_t type;
+        current = shellpp_fs_path_type(roots[index], &exists, &type);
+        if (current != SHELLPP_FS_OK) {
+            if (result == SHELLPP_FS_OK) result = current;
+            continue;
+        }
+        if (!exists) continue;
+        if (type != VELA_DT_DIR) {
+            if (result == SHELLPP_FS_OK) result = SHELLPP_FS_ERR_UNSAFE_TYPE;
+            continue;
+        }
+        if (shellpp_fs_join(roots[index], package_name, path, sizeof(path)) !=
+                SHELLPP_FS_OK) return SHELLPP_FS_ERR_PATH;
+        current = shellpp_fs_remove_tree(path);
+        if (current != SHELLPP_FS_OK && result == SHELLPP_FS_OK) result = current;
+    }
+    return result;
 }
 
 static int root_type(const char *path, uint8_t *exists) {
