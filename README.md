@@ -1,22 +1,14 @@
 # Shell++ II
 
-Shell++ II 的原生模块源码，当前目标为 Xiaomi Band 10 Pro 固件 `3.101.036`。
+Xiaomi Band 10 Pro 的共享 nativeApp 源码。固件私有 ABI 由相邻构建器的 target profile 生成并注入。
 
-## 快速开始
+完整技术文档统一位于 [`docs/README.md`](docs/README.md)，包括架构、固件 ABI、构建、安装器协议、固件适配、验证、故障排查和 AI 交接规范。
 
-在同一个父目录中拉取三个仓库。构建脚本依赖它们的相对位置：
+同机型新系统的适配必须在取得该固件完整 ABI 后开始。ABI 不完整时只能继续分析并记录缺口，不能创建可发布 target。
 
-```sh
-git clone https://github.com/Shellplusplus/Shellpp-II-App.git shellpp-ii
-git clone https://github.com/Shellplusplus/Shellpp-II-Build.git shellpp-ii-build
-git clone https://github.com/Shellplusplus/Shellpp-II-install-Lua.git shellpp-ii-installer
-```
-
-构建环境需要 macOS、Apple Clang、Rust 工具链（提供 `rust-lld`）、Python 3、Node.js 和 `sips`。然后执行：
+构建入口：
 
 ```sh
-cd shellpp-ii-build
+cd /Users/ikun_cxkpro/Projects/Shell++/Shellpp-ii-build
 ./build.sh
 ```
-
-构建产物为 `out/xiaomi-band-10-pro-3.101.036/shellpp_ii.bin`。脚本会同时更新相邻 `shellpp-ii-installer` 仓库中的原生模块、图标资源、`resource.bin` 和 `hashCode`。

@@ -1,26 +1,24 @@
 #include "shellpp_native_app.h"
 #include "shellpp_native_ui.h"
+#include "shellpp_firmware_abi.h"
 
 /*
- * Xiaomi Band 10 Pro, firmware 3.101.036.
- *
- * Registration mirrors the verified Canopus Supervisor sequence for this
- * firmware: app lookup -> app/page registration -> app lookup -> Launcher
- * publication -> notification.  The 0x0c addresses are the module runtime
- * mapping used by Canopus; the 0x2c-prefixed firmware dump uses a different
- * image-analysis base and must not be called by a loaded module.
+ * Registration follows the verified Band 10 Pro sequence for the exact target
+ * selected by the compiler: app lookup -> app/page registration -> app lookup
+ * -> Launcher publication -> notification. Firmware addresses and descriptor
+ * sizes come only from the generated target ABI.
  */
 typedef void *(*app_lookup_t)(uint16_t app_id);
 typedef int (*app_install_t)(void *app, void *const *pages, uint32_t page_count);
 typedef int (*launcher_add_t)(uint16_t app_id);
 typedef int (*notification_submit_t)(const void *notification);
-#define APP_LOOKUP ((app_lookup_t)0x0ca5107du)
-#define APP_INSTALL ((app_install_t)0x0ca51a55u)
-#define LAUNCHER_ADD ((launcher_add_t)0x0c4f2c4du)
-#define NOTIFICATION_SUBMIT ((notification_submit_t)0x0ca81fb9u)
+#define APP_LOOKUP ((app_lookup_t)SHELLPP_ABI_APP_LOOKUP_ADDR)
+#define APP_INSTALL ((app_install_t)SHELLPP_ABI_APP_INSTALL_ADDR)
+#define LAUNCHER_ADD ((launcher_add_t)SHELLPP_ABI_LAUNCHER_ADD_ADDR)
+#define NOTIFICATION_SUBMIT ((notification_submit_t)SHELLPP_ABI_NOTIFICATION_SUBMIT_ADDR)
 
-#define APP_DESCRIPTOR_SIZE 0x40u
-#define PAGE_DESCRIPTOR_SIZE 0x74u
+#define APP_DESCRIPTOR_SIZE SHELLPP_ABI_APP_DESCRIPTOR_SIZE
+#define PAGE_DESCRIPTOR_SIZE SHELLPP_ABI_PAGE_DESCRIPTOR_SIZE
 #define SHELLPP_PAGE_COUNT 8u
 #define SHELLPP_APP_ID 0x00cdu
 #define ERR_APP_MISSING (-100)
@@ -98,9 +96,9 @@ static const struct shellpp_notification g_foreground_notification = {
 };
 
 _Static_assert(sizeof(g_app_descriptor) == APP_DESCRIPTOR_SIZE,
-    "3.101.036 launcher descriptor size");
+    "target launcher descriptor size");
 _Static_assert(sizeof(g_page_descriptors[0]) == PAGE_DESCRIPTOR_SIZE,
-    "3.101.036 page descriptor size");
+    "target page descriptor size");
 _Static_assert(sizeof(struct shellpp_notification) == 0x58u,
     "Canopus-compatible notification record size");
 

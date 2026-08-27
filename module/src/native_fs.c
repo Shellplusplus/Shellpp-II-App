@@ -1,15 +1,15 @@
 #include "shellpp_native_fs.h"
+#include "shellpp_firmware_abi.h"
 
-/* Xiaomi Band 10 Pro 3.101.036 uses the older NuttX flag layout. */
-#define VELA_O_RDONLY 0x01
-#define VELA_O_WRONLY 0x02
-#define VELA_O_CREAT 0x04
-#define VELA_O_TRUNC 0x20
-#define VELA_SEEK_SET 0
-#define VELA_SEEK_END 2
-#define VELA_DT_DIR 4u
-#define VELA_DT_REG 8u
-#define VELA_DT_LNK 10u
+#define VELA_O_RDONLY SHELLPP_ABI_O_RDONLY
+#define VELA_O_WRONLY SHELLPP_ABI_O_WRONLY
+#define VELA_O_CREAT SHELLPP_ABI_O_CREAT
+#define VELA_O_TRUNC SHELLPP_ABI_O_TRUNC
+#define VELA_SEEK_SET SHELLPP_ABI_SEEK_SET
+#define VELA_SEEK_END SHELLPP_ABI_SEEK_END
+#define VELA_DT_DIR SHELLPP_ABI_DT_DIR
+#define VELA_DT_REG SHELLPP_ABI_DT_REG
+#define VELA_DT_LNK SHELLPP_ABI_DT_LNK
 #define WALK_DEPTH_LIMIT 12u
 
 typedef int32_t (*vela_open_t)(const char *, int32_t, ...);
@@ -24,17 +24,17 @@ typedef int32_t (*vela_closedir_t)(void *);
 typedef uint8_t *(*vela_readdir_t)(void *);
 typedef int32_t (*vela_rmdir_t)(const char *);
 
-#define VELA_OPEN ((vela_open_t)0x0c1c15b1u)
-#define VELA_READ ((vela_read_t)0x0c1c1e25u)
-#define VELA_WRITE ((vela_write_t)0x0c1c31c9u)
-#define VELA_CLOSE ((vela_close_t)0x0c1aab71u)
-#define VELA_LSEEK ((vela_lseek_t)0x0c1c10adu)
-#define VELA_UNLINK ((vela_unlink_t)0x0c1c2eddu)
-#define VELA_RENAME ((vela_rename_t)0x0c1c1e71u)
-#define VELA_OPENDIR ((vela_opendir_t)0x0c1d50b1u)
-#define VELA_CLOSEDIR ((vela_closedir_t)0x0c1d50edu)
-#define VELA_READDIR ((vela_readdir_t)0x0c1d5119u)
-#define VELA_RMDIR ((vela_rmdir_t)0x0c1c21d1u)
+#define VELA_OPEN ((vela_open_t)SHELLPP_ABI_OPEN_ADDR)
+#define VELA_READ ((vela_read_t)SHELLPP_ABI_READ_ADDR)
+#define VELA_WRITE ((vela_write_t)SHELLPP_ABI_WRITE_ADDR)
+#define VELA_CLOSE ((vela_close_t)SHELLPP_ABI_CLOSE_ADDR)
+#define VELA_LSEEK ((vela_lseek_t)SHELLPP_ABI_LSEEK_ADDR)
+#define VELA_UNLINK ((vela_unlink_t)SHELLPP_ABI_UNLINK_ADDR)
+#define VELA_RENAME ((vela_rename_t)SHELLPP_ABI_RENAME_ADDR)
+#define VELA_OPENDIR ((vela_opendir_t)SHELLPP_ABI_OPENDIR_ADDR)
+#define VELA_CLOSEDIR ((vela_closedir_t)SHELLPP_ABI_CLOSEDIR_ADDR)
+#define VELA_READDIR ((vela_readdir_t)SHELLPP_ABI_READDIR_ADDR)
+#define VELA_RMDIR ((vela_rmdir_t)SHELLPP_ABI_RMDIR_ADDR)
 
 static struct shellpp_fs_entry g_candidates[SHELLPP_FS_DIR_PAGE_ENTRIES + 1u];
 static char g_work_path[SHELLPP_FS_PATH_CAP];
@@ -659,8 +659,8 @@ static uint8_t memory_find_umem(const uint8_t *raw, uint32_t length,
         while (end < length && raw[end] != '\n' && raw[end] != '\r') ++end;
         for (index = start; index + 4u <= end; ++index) {
             if (!memory_label_equal(raw, length, index, "Umem")) continue;
-            /* Firmware 3.101.036 prints the allocator name at the end of
-             * its statistics row: "total used free ... Umem".  Lua
+            /* The target allocator prints its name at the end of the
+             * statistics row: "total used free ... Umem". Lua
              * intentionally parses all numbers on that line; start at the
              * line head here too, rather than after the Umem label. */
             cursor = start;
@@ -828,8 +828,8 @@ int shellpp_fs_read_memory(char *text, uint32_t capacity, uint32_t *percent) {
     if (!text || !capacity) return SHELLPP_FS_ERR_ARGUMENT;
     text[0] = '\0';
     if (percent) *percent = 0u;
-    /* Xiaomi 3.101.036 exposes the allocator's authoritative live values on
-     * the `Umem` row.  This branch scans the complete current stream every
+    /* The target firmware exposes the allocator's authoritative live values
+     * on the `Umem` row. This branch scans the complete current stream every
      * call; it has no cached sample or hard-coded statistic. */
     result = (uint32_t)memory_read_live_umem(&nuttx_total, &nuttx_used,
         &nuttx_free);

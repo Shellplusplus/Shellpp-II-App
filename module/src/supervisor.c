@@ -1,5 +1,6 @@
 #include "shellpp_ii_module.h"
 #include "shellpp_native_app.h"
+#include "shellpp_firmware_abi.h"
 
 /* The firmware module loader does not provide compiler unwind personalities.
  * This Supervisor does not unwind, but Clang emits the index reference. */
@@ -7,12 +8,11 @@ __attribute__((used, naked)) void __aeabi_unwind_cpp_pr0(void) { __asm__("bx lr"
 
 typedef int (*register_driver_t)(const char *, void *, unsigned int, void *);
 typedef int (*unregister_driver_t)(const char *);
-#define REGISTER_DRIVER ((register_driver_t)0x0C1A0D51)
-#define UNREGISTER_DRIVER ((unregister_driver_t)0x0C1A611D)
+#define REGISTER_DRIVER ((register_driver_t)SHELLPP_ABI_REGISTER_DRIVER_ADDR)
+#define UNREGISTER_DRIVER ((unregister_driver_t)SHELLPP_ABI_UNREGISTER_DRIVER_ADDR)
 #define SHELLPP_DEVICE "/dev/shellpp"
 #define SHELLPP_MAGIC 0x53505331u
-#define SHELLPP_STATUS_ABI 2u
-#define SHELLPP_BUILD_MARKER 0x53494932u
+#define SHELLPP_STATUS_ABI 3u
 #define SHELLPP_CMD_RESTORE 0x5351000au
 #define SHELLPP_CMD_INSTALL 0x53510002u
 #define SHELLPP_CMD_UNINSTALL 0x53510003u
@@ -46,7 +46,7 @@ static int control_read(void *file, void *buffer, unsigned int count) {
     *(unsigned int *)(g_status + 36) = g_stage;
     *(unsigned int *)(g_status + 40) = g_stage;
     shellpp_native_get_status(&native_status);
-    *(unsigned int *)(g_status + 44) = SHELLPP_BUILD_MARKER;
+    *(unsigned int *)(g_status + 44) = SHELLPP_ABI_FIRMWARE_CODE;
     *(unsigned int *)(g_status + 48) = g_registered;
     *(unsigned int *)(g_status + 52) = native_status.app_id;
     *(unsigned int *)(g_status + 56) = native_status.registered;

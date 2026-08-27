@@ -1,5 +1,6 @@
 #include "shellpp_native_ui.h"
 #include "shellpp_native_fs.h"
+#include "shellpp_firmware_abi.h"
 
 typedef void *(*lvx_content_create_t)(void *root);
 typedef void *(*lvx_page_title_create_t)(void *root, const char *title,
@@ -42,35 +43,35 @@ typedef int (*restart_attr_init_t)(void *attr);
 typedef int (*restart_attr_destroy_t)(void *attr);
 typedef int (*restart_waitpid_t)(uint32_t pid, int *status, int options);
 
-#define LVX_CONTENT_CREATE ((lvx_content_create_t)0x0ca4e991u)
-#define LVX_PAGE_TITLE_CREATE ((lvx_page_title_create_t)0x0c4a99adu)
-#define LVX_LABEL_CREATE ((lvx_label_create_t)0x0c589061u)
-#define LVX_LABEL_SET_TEXT ((lvx_label_set_text_t)0x0c587f51u)
-#define LV_DISPLAY_GET_LAYER_TOP ((lv_display_get_layer_top_t)0x0c13cc51u)
-#define LV_TIMER_CREATE ((lv_timer_create_t)0x0c16d151u)
-#define LV_TIMER_DELETE ((lv_timer_delete_t)0x0c16d1c5u)
-#define LVX_OBJECT_SET_SIZE ((lvx_object_set_size_t)0x0c588e79u)
-#define LVX_OBJECT_ALIGN ((lvx_object_align_t)0x0c587c11u)
-#define LVX_ALIGN_TO ((lvx_align_to_t)0x0c588501u)
-#define LVX_SET_HIDDEN ((lvx_set_hidden_t)0x0c5879b9u)
-#define LVX_STYLE_APPLY ((lvx_style_apply_t)0x0c49eb81u)
-#define LVX_LIST_ROW_CREATE ((lvx_list_row_create_t)0x0c52b78du)
-#define LVX_LIST_ROW_UPDATE ((lvx_list_row_update_t)0x0c4a7bedu)
-#define LVX_LIST_ROW_TRAILING ((lvx_list_row_trailing_t)0x0c4a7f49u)
-#define LVX_EVENT_ADD ((lvx_event_add_t)0x0c5881a9u)
-#define LVX_EVENT_GET_USER_DATA ((lvx_event_get_user_data_t)0x0c588239u)
-#define LVX_EVENT_GET_CODE ((lvx_event_get_code_t)0x0c588f59u)
-#define ACTIVITY_NAVIGATE ((activity_navigate_t)0x0ca53aa1u)
-#define ACTIVITY_FINISH ((activity_finish_t)0x0ca53131u)
-#define RESTART_SPAWN ((restart_spawn_t)0x008cd299u)
-#define RESTART_FA_INIT ((restart_fa_init_t)0x008c877du)
-#define RESTART_FA_ADDOPEN ((restart_fa_addopen_t)0x008c86d9u)
-#define RESTART_FA_DESTROY ((restart_fa_destroy_t)0x008c874du)
-#define RESTART_ATTR_INIT ((restart_attr_init_t)0x006568b1u)
-#define RESTART_ATTR_DESTROY ((restart_attr_destroy_t)0x0065690du)
-#define RESTART_WAITPID ((restart_waitpid_t)0x008cd1c1u)
-#define RESTART_SOFT ((void (*)(void))0x00072d01u)
-#define STYLE_MISANS_DEMIBOLD_32 ((const void *)0x2010a02cu)
+#define LVX_CONTENT_CREATE ((lvx_content_create_t)SHELLPP_ABI_LVX_CONTENT_CREATE_ADDR)
+#define LVX_PAGE_TITLE_CREATE ((lvx_page_title_create_t)SHELLPP_ABI_LVX_PAGE_TITLE_CREATE_ADDR)
+#define LVX_LABEL_CREATE ((lvx_label_create_t)SHELLPP_ABI_LVX_LABEL_CREATE_ADDR)
+#define LVX_LABEL_SET_TEXT ((lvx_label_set_text_t)SHELLPP_ABI_LVX_LABEL_SET_TEXT_ADDR)
+#define LV_DISPLAY_GET_LAYER_TOP ((lv_display_get_layer_top_t)SHELLPP_ABI_LV_DISPLAY_GET_LAYER_TOP_ADDR)
+#define LV_TIMER_CREATE ((lv_timer_create_t)SHELLPP_ABI_LV_TIMER_CREATE_ADDR)
+#define LV_TIMER_DELETE ((lv_timer_delete_t)SHELLPP_ABI_LV_TIMER_DELETE_ADDR)
+#define LVX_OBJECT_SET_SIZE ((lvx_object_set_size_t)SHELLPP_ABI_LVX_OBJECT_SET_SIZE_ADDR)
+#define LVX_OBJECT_ALIGN ((lvx_object_align_t)SHELLPP_ABI_LVX_OBJECT_ALIGN_ADDR)
+#define LVX_ALIGN_TO ((lvx_align_to_t)SHELLPP_ABI_LVX_ALIGN_TO_ADDR)
+#define LVX_SET_HIDDEN ((lvx_set_hidden_t)SHELLPP_ABI_LVX_SET_HIDDEN_ADDR)
+#define LVX_STYLE_APPLY ((lvx_style_apply_t)SHELLPP_ABI_LVX_STYLE_APPLY_ADDR)
+#define LVX_LIST_ROW_CREATE ((lvx_list_row_create_t)SHELLPP_ABI_LVX_LIST_ROW_CREATE_ADDR)
+#define LVX_LIST_ROW_UPDATE ((lvx_list_row_update_t)SHELLPP_ABI_LVX_LIST_ROW_UPDATE_ADDR)
+#define LVX_LIST_ROW_TRAILING ((lvx_list_row_trailing_t)SHELLPP_ABI_LVX_LIST_ROW_TRAILING_ADDR)
+#define LVX_EVENT_ADD ((lvx_event_add_t)SHELLPP_ABI_LVX_EVENT_ADD_ADDR)
+#define LVX_EVENT_GET_USER_DATA ((lvx_event_get_user_data_t)SHELLPP_ABI_LVX_EVENT_GET_USER_DATA_ADDR)
+#define LVX_EVENT_GET_CODE ((lvx_event_get_code_t)SHELLPP_ABI_LVX_EVENT_GET_CODE_ADDR)
+#define ACTIVITY_NAVIGATE ((activity_navigate_t)SHELLPP_ABI_ACTIVITY_NAVIGATE_ADDR)
+#define ACTIVITY_FINISH ((activity_finish_t)SHELLPP_ABI_ACTIVITY_FINISH_ADDR)
+#define RESTART_SPAWN ((restart_spawn_t)SHELLPP_ABI_POSIX_SPAWN_ADDR)
+#define RESTART_FA_INIT ((restart_fa_init_t)SHELLPP_ABI_FILE_ACTIONS_INIT_ADDR)
+#define RESTART_FA_ADDOPEN ((restart_fa_addopen_t)SHELLPP_ABI_FILE_ACTIONS_ADDOPEN_ADDR)
+#define RESTART_FA_DESTROY ((restart_fa_destroy_t)SHELLPP_ABI_FILE_ACTIONS_DESTROY_ADDR)
+#define RESTART_ATTR_INIT ((restart_attr_init_t)SHELLPP_ABI_SPAWNATTR_INIT_ADDR)
+#define RESTART_ATTR_DESTROY ((restart_attr_destroy_t)SHELLPP_ABI_SPAWNATTR_DESTROY_ADDR)
+#define RESTART_WAITPID ((restart_waitpid_t)SHELLPP_ABI_WAITPID_ADDR)
+#define RESTART_SOFT ((void (*)(void))SHELLPP_ABI_SOFT_RESTART_ADDR)
+#define STYLE_MISANS_DEMIBOLD_32 ((const void *)SHELLPP_ABI_STYLE_MISANS_DEMIBOLD_32_ADDR)
 
 #define SHELLPP_APP_ID 0x00cdu
 #define PAGE_COUNT 8u
@@ -91,9 +92,9 @@ typedef int (*restart_waitpid_t)(uint32_t pid, int *status, int options);
 #define CONTENT_WIDTH 336
 #define CONTENT_HEIGHT 424
 #define CONTENT_TOP_OFFSET 56
-#define ALIGN_TOP_MID 2u
-#define ALIGN_TOP_LEFT 1u
-#define ALIGN_OUT_BOTTOM_MID 13u
+#define ALIGN_TOP_MID SHELLPP_ABI_ALIGN_TOP_MID
+#define ALIGN_TOP_LEFT SHELLPP_ABI_ALIGN_TOP_LEFT
+#define ALIGN_OUT_BOTTOM_MID SHELLPP_ABI_ALIGN_OUT_BOTTOM_MID
 #define CPU_FLOAT_LAYER_X 25
 #define CPU_FLOAT_LAYER_Y 20
 #define CPU_FLOAT_LABEL_X -20
@@ -104,8 +105,8 @@ typedef int (*restart_waitpid_t)(uint32_t pid, int *status, int options);
 #define VIEW_LABEL_TOP 0
 #define VIEW_LABEL_HEIGHT 210
 #define VIEW_ROW_TOP 216
-#define EVENT_CLICKED 7u
-#define TRAILING_NONE 0u
+#define EVENT_CLICKED SHELLPP_ABI_EVENT_CLICKED
+#define TRAILING_NONE SHELLPP_ABI_TRAILING_NONE
 #define ROW_GAP 4
 #define LABEL_SLICE 384u
 #define HEX_RAW_OFFSET 8192u
@@ -2250,7 +2251,8 @@ static void render_about(void) {
     uint32_t count = 0u;
     add_spec(specs, &count, "Shell++ II", "Beta1", ACTION_NONE, 0u, 0u);
     add_spec(specs, &count, "com.shellpp.ii", "包名", ACTION_NONE, 0u, 0u);
-    add_spec(specs, &count, "系统固件", "3.101.036", ACTION_NONE, 0u, 0u);
+    add_spec(specs, &count, "系统固件", SHELLPP_TARGET_FIRMWARE_VERSION,
+        ACTION_NONE, 0u, 0u);
     add_spec(specs, &count, "开发人员", "@IKUN_CXKPRO", ACTION_NONE, 0u, 0u);
     apply_specs(PAGE_ABOUT, specs, count, 0, 0, 0);
 }
