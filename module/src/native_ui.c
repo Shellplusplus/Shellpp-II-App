@@ -1,4 +1,5 @@
 #include "shellpp_native_ui.h"
+#include "shellpp_native_app.h"
 #include "shellpp_native_fs.h"
 #include "shellpp_firmware_abi.h"
 
@@ -2247,13 +2248,15 @@ static void render_restart(void) {
 }
 
 static void render_about(void) {
-    struct row_spec specs[4];
+    struct row_spec specs[5];
     uint32_t count = 0u;
     add_spec(specs, &count, "Shell++ II", "Beta1", ACTION_NONE, 0u, 0u);
     add_spec(specs, &count, "com.shellpp.ii", "包名", ACTION_NONE, 0u, 0u);
     add_spec(specs, &count, "系统固件", SHELLPP_TARGET_FIRMWARE_VERSION,
         ACTION_NONE, 0u, 0u);
     add_spec(specs, &count, "开发人员", "@IKUN_CXKPRO", ACTION_NONE, 0u, 0u);
+    add_spec(specs, &count, "运行模式", shellpp_native_run_mode(),
+        ACTION_NONE, 0u, 0u);
     apply_specs(PAGE_ABOUT, specs, count, 0, 0, 0);
 }
 

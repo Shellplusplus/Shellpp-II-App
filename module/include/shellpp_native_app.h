@@ -9,7 +9,9 @@ int shellpp_native_install_stage(uint32_t stage);
 
 /* Submit the one-time Supervisor-loaded notification after the control driver
  * has been registered and Lua has staged the launcher icon. */
-int shellpp_native_notify_loaded(void);
+/* mode: 0/1 Launcher, 2 Both, 3 Settings. */
+int shellpp_native_notify_loaded(uint32_t mode);
+const char *shellpp_native_run_mode(void);
 
 struct shellpp_native_status {
     uint32_t app_id;

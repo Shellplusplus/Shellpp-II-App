@@ -65,7 +65,7 @@ static int control_write(void *file, const void *buffer, unsigned int count) {
     if (!buffer || count < 16 || command[0] != SHELLPP_MAGIC) return -22;
     g_command = command[1]; g_stage = command[2]; g_error = 0;
     if (g_command == SHELLPP_CMD_NOTIFY_LOADED) {
-        rc = shellpp_native_notify_loaded();
+        rc = shellpp_native_notify_loaded(g_stage);
     } else if (g_command == SHELLPP_CMD_RESTORE ||
         (g_command == SHELLPP_CMD_INSTALL && g_stage == 0)) {
         rc = 0;

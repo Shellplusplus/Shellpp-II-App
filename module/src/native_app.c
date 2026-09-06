@@ -41,7 +41,9 @@ static const char g_page_names[SHELLPP_PAGE_COUNT][16] = {
 };
 static const char g_launcher_icon[] = "/data/shellpp-ii/shellpp_ii_icon.bin";
 static const char g_notification_title[] = "Shell++ II";
-static const char g_notification_body[] = "Shell++ 已成功加载";
+static const char g_notification_body[] = "Shell++已成功加载(launcher)";
+static const char g_notification_both[] = "Shell++已成功加载(both)";
+static const char g_notification_settings[] = "Shell++已成功加载(settings)";
 
 /* Firmware retains descriptors and callback pointers after app_install(). */
 static uint32_t g_app_descriptor[APP_DESCRIPTOR_SIZE / sizeof(uint32_t)];
@@ -52,6 +54,7 @@ static volatile uint16_t g_app_id = SHELLPP_APP_ID;
 static volatile uint32_t g_registered;
 static volatile uint32_t g_published;
 static volatile uint32_t g_loaded_notified;
+static uint32_t g_run_mode;
 static volatile int g_install_result;
 static volatile int g_launcher_result;
 static volatile int g_loaded_notification_result;
@@ -85,7 +88,7 @@ struct shellpp_notification {
  * command is the equivalent of Canopus's load-notice entry point, so use the
  * foreground module class here.  This preserves the requested single notice
  * while allowing firmware to select the same alert/haptic policy as Canopus. */
-static const struct shellpp_notification g_foreground_notification = {
+static struct shellpp_notification g_foreground_notification = {
     0x50555302u, 0x43414e4fu, 0u,
     g_notification_title, g_notification_title, g_notification_body,
     0, g_launcher_icon, g_launcher_icon,
@@ -282,8 +285,12 @@ int shellpp_native_install_stage(uint32_t stage) {
     return ERR_BAD_STAGE;
 }
 
-int shellpp_native_notify_loaded(void) {
+int shellpp_native_notify_loaded(uint32_t mode) {
+    if (mode > 3u) return ERR_BAD_STAGE;
     if (!g_loaded_notified) {
+        g_run_mode = mode ? mode : 1u;
+        g_foreground_notification.body = mode == 2u ? g_notification_both
+            : mode == 3u ? g_notification_settings : g_notification_body;
         /* Exactly one notification per boot/Run: use the foreground record.
          * The firmware may also retain this one record in notification center,
          * but Shell++ must not submit a second duplicate entry. */
@@ -291,6 +298,13 @@ int shellpp_native_notify_loaded(void) {
         g_loaded_notified = 1u;
     }
     return 0;
+}
+
+const char *shellpp_native_run_mode(void) {
+    if (g_run_mode == 2u) return "both";
+    if (g_run_mode == 3u) return "settings";
+    if (g_run_mode == 1u) return "launcher";
+    return "加载中";
 }
 
 void shellpp_native_get_status(struct shellpp_native_status *status) {
