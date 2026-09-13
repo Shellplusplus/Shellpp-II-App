@@ -19,7 +19,7 @@ typedef int (*notification_submit_t)(const void *notification);
 
 #define APP_DESCRIPTOR_SIZE SHELLPP_ABI_APP_DESCRIPTOR_SIZE
 #define PAGE_DESCRIPTOR_SIZE SHELLPP_ABI_PAGE_DESCRIPTOR_SIZE
-#define SHELLPP_PAGE_COUNT 8u
+#define SHELLPP_PAGE_COUNT 11u
 #define SHELLPP_APP_ID 0x00cdu
 #define ERR_APP_MISSING (-100)
 #define ERR_APP_CONFLICT (-101)
@@ -37,7 +37,10 @@ static const char g_page_names[SHELLPP_PAGE_COUNT][16] = {
     "shellpp-about",
     "shellpp-display",
     "shellpp-cpu",
+    "shellpp-bench",
+    "shellpp-memory",
     "shellpp-restart",
+    "shellpp-vib",
 };
 static const char g_launcher_icon[] = "/data/shellpp-ii/shellpp_ii_icon.bin";
 static const char g_notification_title[] = "Shell++ II";

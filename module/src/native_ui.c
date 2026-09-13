@@ -75,7 +75,6 @@ typedef int (*restart_waitpid_t)(uint32_t pid, int *status, int options);
 #define STYLE_MISANS_DEMIBOLD_32 ((const void *)SHELLPP_ABI_STYLE_MISANS_DEMIBOLD_32_ADDR)
 
 #define SHELLPP_APP_ID 0x00cdu
-#define PAGE_COUNT 8u
 #define PAGE_HOME 0u
 #define PAGE_FILES 1u
 #define PAGE_VIEWER 2u
@@ -83,13 +82,17 @@ typedef int (*restart_waitpid_t)(uint32_t pid, int *status, int options);
 #define PAGE_ABOUT 4u
 #define PAGE_DISPLAY 5u
 #define PAGE_CPU 6u
-#define PAGE_RESTART 7u
+#define PAGE_CPU_BENCH 7u
+#define PAGE_MEMORY 8u
+#define PAGE_RESTART 9u
+#define PAGE_VIBRATION 10u
+#define PAGE_COUNT 11u
 #define MONITOR_CPU 0u
 #define MONITOR_MEMORY 1u
 #define MONITOR_STATE_MEMORY_PAGE 0x01u
 #define MONITOR_STATE_MEMORY_ENABLED 0x02u
 #define MONITOR_STATE_MEMORY_FLOAT 0x04u
-#define UI_MAX_ROWS 32u
+#define UI_MAX_ROWS 28u
 #define CONTENT_WIDTH 336
 #define CONTENT_HEIGHT 424
 #define CONTENT_TOP_OFFSET 56
@@ -183,6 +186,10 @@ enum ui_action {
     ACTION_RESTART_HARD = 60,
     ACTION_RESTART_SOFT = 61,
     ACTION_BROWSER_DETAIL_BACK = 62,
+    ACTION_CPU_BENCH = 63,
+    ACTION_CPU_BENCH_PAGE_OPEN = 64,
+    ACTION_VIBRATION_PAGE_OPEN = 65,
+    ACTION_VIBRATION_TEST = 66,
 };
 
 struct ui_binding {
@@ -199,7 +206,6 @@ struct ui_page {
     void *descriptor;
     void *label;
     void *rows[UI_MAX_ROWS];
-    struct ui_binding bindings[UI_MAX_ROWS];
     uint16_t generation;
     uint8_t active;
     uint8_t interactive;
@@ -237,6 +243,11 @@ struct app_item_meta {
 };
 
 static struct ui_page g_ui[PAGE_COUNT];
+/* Only the foreground page needs live action bindings. Sharing this table
+ * keeps the extra benchmark page within the 036 firmware BSS limit. */
+static struct ui_binding g_bindings[UI_MAX_ROWS];
+static uint16_t g_bindings_generation;
+static uint8_t g_bindings_page;
 static union {
     struct shellpp_fs_page directory;
     struct app_item_meta apps[APP_MAX_ITEMS];
@@ -281,6 +292,8 @@ static char g_clipboard_secondary[96];
 static char g_cache_total_text[24];
 static char g_cache_freed_text[24];
 static char g_memory_text[48];
+static char g_cpu_bench_rows[6][24];
+/* The resident Shell++ Lua service owns this application data directory. */
 
 static uint32_t g_workspace_length;
 static uint32_t g_selected_size;
@@ -325,7 +338,10 @@ static const char g_page_titles[PAGE_COUNT][32] = {
     "关于 Shell++ II",
     "显示",
     "占用显示",
+    "CPU跑分",
+    "内存占用",
     "重启",
+    "震动测试",
 };
 
 static void clear_bytes(void *address, uint32_t length) {
@@ -447,6 +463,10 @@ static void apply_misans(void *object) {
 }
 
 static int memory_sample(void);
+static int set_cpu_monitor(uint8_t enabled);
+static int set_cpu_float(uint8_t enabled);
+static int set_memory_monitor(uint8_t enabled);
+static int set_memory_float(uint8_t enabled);
 
 static int cpu_sample(void) {
     int result = shellpp_fs_read_cpu(g_cpu_text, sizeof(g_cpu_text), 0);
@@ -458,6 +478,73 @@ static int cpu_sample(void) {
             g_cpu_text, TRAILING_NONE, 0u);
     }
     return result;
+}
+
+static void format_cpu_bench_result(
+        const struct shellpp_cpu_bench_result *result) {
+    char *cursor;
+    char *end;
+    cursor = g_cpu_bench_rows[0]; end = cursor + sizeof(g_cpu_bench_rows[0]);
+    cursor = append_text(cursor, end, "综合：");
+    cursor = append_u32(cursor, end, result->overall_score);
+    (void)append_text(cursor, end, " 分");
+    cursor = g_cpu_bench_rows[1]; end = cursor + sizeof(g_cpu_bench_rows[1]);
+    cursor = append_text(cursor, end, "整数：");
+    cursor = append_u32(cursor, end, result->integer_score);
+    (void)append_text(cursor, end, " 分");
+    cursor = g_cpu_bench_rows[2]; end = cursor + sizeof(g_cpu_bench_rows[2]);
+    cursor = append_text(cursor, end, "浮点：");
+    cursor = append_u32(cursor, end, result->float_score);
+    (void)append_text(cursor, end, " 分");
+    cursor = g_cpu_bench_rows[3]; end = cursor + sizeof(g_cpu_bench_rows[3]);
+    cursor = append_text(cursor, end, "内存：");
+    cursor = append_u32(cursor, end, result->memory_score);
+    (void)append_text(cursor, end, " 分");
+    cursor = g_cpu_bench_rows[4]; end = cursor + sizeof(g_cpu_bench_rows[4]);
+    cursor = append_text(cursor, end, "混合：");
+    cursor = append_u32(cursor, end, result->mixed_score);
+    (void)append_text(cursor, end, " 分");
+    cursor = g_cpu_bench_rows[5]; end = cursor + sizeof(g_cpu_bench_rows[5]);
+    cursor = append_text(cursor, end, "耗时：");
+    cursor = append_u32(cursor, end, result->elapsed_ms);
+    (void)append_text(cursor, end, " ms");
+}
+
+static int cpu_bench_run(void) {
+    uint8_t cpu_enabled = g_cpu_monitor_enabled;
+    uint8_t memory_enabled = (g_monitor_state & MONITOR_STATE_MEMORY_ENABLED) != 0u;
+    uint8_t memory_float = (g_monitor_state & MONITOR_STATE_MEMORY_FLOAT) != 0u;
+    struct shellpp_cpu_bench_result bench_result;
+    int status;
+
+    if (cpu_enabled) (void)set_cpu_monitor(0u);
+    if (memory_enabled) (void)set_memory_monitor(0u);
+    if (memory_float) (void)set_memory_float(0u);
+    status = shellpp_cpu_bench_run(&bench_result);
+    if (status == 0) {
+        format_cpu_bench_result(&bench_result);
+        copy_text(g_status, sizeof(g_status),
+            "CPU跑分完成");
+    } else {
+        copy_text(g_cpu_bench_rows[0], sizeof(g_cpu_bench_rows[0]),
+            "综合：不可用");
+        copy_text(g_cpu_bench_rows[1], sizeof(g_cpu_bench_rows[1]),
+            "整数：不可用");
+        copy_text(g_cpu_bench_rows[2], sizeof(g_cpu_bench_rows[2]),
+            "浮点：不可用");
+        copy_text(g_cpu_bench_rows[3], sizeof(g_cpu_bench_rows[3]),
+            "内存：不可用");
+        copy_text(g_cpu_bench_rows[4], sizeof(g_cpu_bench_rows[4]),
+            "混合：不可用");
+        copy_text(g_cpu_bench_rows[5], sizeof(g_cpu_bench_rows[5]),
+            "耗时：不可用");
+        copy_text(g_status, sizeof(g_status),
+            "CPU跑分失败");
+    }
+    if (memory_float) (void)set_memory_float(1u);
+    if (memory_enabled) (void)set_memory_monitor(1u);
+    if (cpu_enabled) (void)set_cpu_monitor(1u);
+    return status;
 }
 
 static void cpu_timer_callback(void *timer) {
@@ -485,9 +572,9 @@ static int memory_sample(void) {
     if (g_memory_float_label &&
             (g_monitor_state & MONITOR_STATE_MEMORY_FLOAT))
         LVX_LABEL_SET_TEXT(g_memory_float_label, g_memory_text);
-    if (g_ui[PAGE_CPU].active && g_ui[PAGE_CPU].interactive &&
-            g_ui[PAGE_CPU].rows[2]) {
-        LVX_LIST_ROW_UPDATE(g_ui[PAGE_CPU].rows[2], 0, "当前占用",
+    if (g_ui[PAGE_MEMORY].active && g_ui[PAGE_MEMORY].interactive &&
+            g_ui[PAGE_MEMORY].rows[2]) {
+        LVX_LIST_ROW_UPDATE(g_ui[PAGE_MEMORY].rows[2], 0, "当前占用",
             g_memory_text, TRAILING_NONE, 0u);
     }
     return result;
@@ -669,7 +756,7 @@ static void rebuild_viewer_content(void) {
     ui->content = content;
     ui->label = 0;
     clear_bytes(ui->rows, sizeof(ui->rows));
-    clear_bytes(ui->bindings, sizeof(ui->bindings));
+    if (g_bindings_page == PAGE_VIEWER) g_bindings_page = 0xffu;
 }
 
 static int ensure_row(struct ui_page *ui, uint32_t page_index, uint32_t slot,
@@ -693,7 +780,9 @@ static void apply_specs(uint32_t page_index, const struct row_spec *specs,
     struct ui_page *ui = &g_ui[page_index];
     uint32_t index;
     if (count > UI_MAX_ROWS) count = UI_MAX_ROWS;
-
+    clear_bytes(g_bindings, sizeof(g_bindings));
+    g_bindings_page = (uint8_t)page_index;
+    g_bindings_generation = ui->generation;
     /* Hide stale rows before painting the new directory. Do not update them
      * with empty text: this firmware still lays out an empty list-row as a
      * visible card, which creates placeholder cards below the real entries. */
@@ -701,7 +790,6 @@ static void apply_specs(uint32_t page_index, const struct row_spec *specs,
         if (ui->rows[index]) {
             set_row_hidden(ui->rows[index], 1u);
         }
-        clear_bytes(&ui->bindings[index], sizeof(ui->bindings[index]));
     }
     if (ui->label) LVX_SET_HIDDEN(ui->label, 1u);
     if (label_text) {
@@ -727,9 +815,9 @@ static void apply_specs(uint32_t page_index, const struct row_spec *specs,
             LVX_ALIGN_TO(ui->rows[index], ui->rows[index - 1u],
                 ALIGN_OUT_BOTTOM_MID, 0, ROW_GAP);
         }
-        ui->bindings[index].action = specs[index].action;
-        ui->bindings[index].argument = specs[index].argument;
-        ui->bindings[index].enabled = specs[index].enabled;
+        g_bindings[index].action = specs[index].action;
+        g_bindings[index].argument = specs[index].argument;
+        g_bindings[index].enabled = specs[index].enabled;
         set_row_enabled(ui->rows[index], specs[index].enabled);
     }
 }
@@ -2224,10 +2312,14 @@ static void format_clipboard_secondary(void) {
 }
 
 static void render_home(void) {
-    struct row_spec specs[5];
+    struct row_spec specs[7];
     uint32_t count = 0u;
     add_spec(specs, &count, "文件与应用管理", "文件查看与缓存清理",
         ACTION_FILE_GROUP_OPEN, PAGE_FILES, 1u);
+    add_spec(specs, &count, "CPU跑分", "综合性能测试",
+        ACTION_CPU_BENCH_PAGE_OPEN, PAGE_CPU_BENCH, 1u);
+    add_spec(specs, &count, "震动测试", "官方震动模式与增强档位",
+        ACTION_VIBRATION_PAGE_OPEN, PAGE_VIBRATION, 1u);
     add_spec(specs, &count, "显示", "系统性能信息显示",
         ACTION_DISPLAY_OPEN, PAGE_FILES, 1u);
     add_spec(specs, &count, "关于", "关于 Shell++ II",
@@ -2284,6 +2376,40 @@ static void render_cpu(void) {
     apply_specs(PAGE_CPU, specs, count, 0, 0, 0);
 }
 
+static void render_cpu_bench(void) {
+    struct row_spec specs[7];
+    uint32_t count = 0u;
+    add_spec(specs, &count, "开始跑分", g_status,
+        ACTION_CPU_BENCH, 0u, 1u);
+    add_spec(specs, &count, g_cpu_bench_rows[0], g_empty,
+        ACTION_NONE, 0u, 0u);
+    add_spec(specs, &count, g_cpu_bench_rows[1], g_empty,
+        ACTION_NONE, 0u, 0u);
+    add_spec(specs, &count, g_cpu_bench_rows[2], g_empty,
+        ACTION_NONE, 0u, 0u);
+    add_spec(specs, &count, g_cpu_bench_rows[3], g_empty,
+        ACTION_NONE, 0u, 0u);
+    add_spec(specs, &count, g_cpu_bench_rows[4], g_empty,
+        ACTION_NONE, 0u, 0u);
+    add_spec(specs, &count, g_cpu_bench_rows[5], g_empty,
+        ACTION_NONE, 0u, 0u);
+    apply_specs(PAGE_CPU_BENCH, specs, count, 0, 0, 0);
+}
+
+static void render_vibration(void) {
+    struct row_spec specs[4];
+    uint32_t count = 0u;
+    add_spec(specs, &count, "短脉冲", "标准震动",
+        ACTION_VIBRATION_TEST, 0u, 1u);
+    add_spec(specs, &count, "增强脉冲", "较强震感",
+        ACTION_VIBRATION_TEST, 1u, 1u);
+    add_spec(specs, &count, "停止", "停止当前震动",
+        ACTION_VIBRATION_TEST, 2u, 1u);
+    add_spec(specs, &count, "状态", g_status,
+        ACTION_NONE, 0u, 0u);
+    apply_specs(PAGE_VIBRATION, specs, count, 0, 0, 0);
+}
+
 static void render_memory(void) {
     struct row_spec specs[3];
     uint32_t count = 0u;
@@ -2299,7 +2425,7 @@ static void render_memory(void) {
         sizeof(g_memory_text), 0);
     add_spec(specs, &count, "当前占用", g_memory_text,
         ACTION_MEMORY_REFRESH, 0u, 1u);
-    apply_specs(PAGE_CPU, specs, count, 0, 0, 0);
+    apply_specs(PAGE_MEMORY, specs, count, 0, 0, 0);
 }
 
 static void format_app_summary(void) {
@@ -2627,11 +2753,11 @@ static void render_page(uint32_t page_index) {
     else if (page_index == PAGE_CACHE) render_cache();
     else if (page_index == PAGE_ABOUT) render_about();
     else if (page_index == PAGE_DISPLAY) render_display();
+    else if (page_index == PAGE_CPU_BENCH) render_cpu_bench();
+    else if (page_index == PAGE_VIBRATION) render_vibration();
     else if (page_index == PAGE_RESTART) render_restart();
-    else if (page_index == PAGE_CPU) {
-        if (g_monitor_state & MONITOR_STATE_MEMORY_PAGE) render_memory();
-        else render_cpu();
-    }
+    else if (page_index == PAGE_CPU) render_cpu();
+    else if (page_index == PAGE_MEMORY) render_memory();
 }
 
 static void browser_previous_page(void) {
@@ -2788,9 +2914,19 @@ static int perform_action(uint32_t page_index, uint8_t action,
             0u, 0u, 0u);
         return 0;
     }
+    if (action == ACTION_CPU_BENCH_PAGE_OPEN) {
+        ACTIVITY_NAVIGATE(((uint32_t)SHELLPP_APP_ID << 16) | PAGE_CPU_BENCH,
+            0u, 0u, 0u);
+        return 0;
+    }
+    if (action == ACTION_VIBRATION_PAGE_OPEN) {
+        ACTIVITY_NAVIGATE(((uint32_t)SHELLPP_APP_ID << 16) | PAGE_VIBRATION,
+            0u, 0u, 0u);
+        return 0;
+    }
     if (action == ACTION_MEMORY_PAGE_OPEN) {
         g_monitor_state |= MONITOR_STATE_MEMORY_PAGE;
-        ACTIVITY_NAVIGATE(((uint32_t)SHELLPP_APP_ID << 16) | PAGE_CPU,
+        ACTIVITY_NAVIGATE(((uint32_t)SHELLPP_APP_ID << 16) | PAGE_MEMORY,
             0u, 0u, 0u);
         return 0;
     }
@@ -2910,6 +3046,19 @@ static int perform_action(uint32_t page_index, uint8_t action,
                 set_status("CPU占用读取失败");
             break;
         }
+        case ACTION_CPU_BENCH:
+            (void)cpu_bench_run();
+            break;
+        case ACTION_VIBRATION_TEST:
+            if (argument == 2u) {
+                set_status(shellpp_vibration_stop() == 0 ?
+                    "震动已停止" : "停止震动失败");
+            } else {
+                set_status(shellpp_vibration_pulse(argument == 1u) == 0 ?
+                    (argument == 1u ? "增强脉冲已启动" : "短脉冲已启动") :
+                    "震动启动失败");
+            }
+            break;
         case ACTION_MEMORY_MONITOR:
             if (set_memory_monitor((g_monitor_state &
                     MONITOR_STATE_MEMORY_ENABLED) ? 0u : 1u) < 0)
@@ -3024,7 +3173,9 @@ static void row_event(void *event) {
     if (page_index >= PAGE_COUNT || slot >= UI_MAX_ROWS) return;
     if (!g_ui[page_index].active || !g_ui[page_index].interactive ||
             g_ui[page_index].generation != generation) return;
-    binding = g_ui[page_index].bindings[slot];
+    if (g_bindings_page != page_index ||
+            g_bindings_generation != generation) return;
+    binding = g_bindings[slot];
     if (!binding.enabled || binding.action == ACTION_NONE) return;
     g_busy = 1u;
     should_render = perform_action(page_index, binding.action,
@@ -3067,6 +3218,9 @@ void shellpp_ui_reset(void) {
     g_app_mode = APP_MODE_MENU;
     restore_cut();
     clear_bytes(g_ui, sizeof(g_ui));
+    clear_bytes(g_bindings, sizeof(g_bindings));
+    g_bindings_generation = 0u;
+    g_bindings_page = 0xffu;
     clear_bytes(&g_directory_page, sizeof(g_directory_page));
     clear_bytes(&g_after_cursor, sizeof(g_after_cursor));
     clear_bytes(&g_navigation_cursor, sizeof(g_navigation_cursor));
@@ -3090,6 +3244,21 @@ void shellpp_ui_reset(void) {
     g_cpu_text[4] = '0';
     g_cpu_text[5] = '%';
     g_cpu_text[6] = '\0';
+    copy_text(g_status, sizeof(g_status), "点击开始");
+    copy_text(g_cpu_bench_rows[0], sizeof(g_cpu_bench_rows[0]),
+        "综合：未运行");
+    copy_text(g_cpu_bench_rows[1], sizeof(g_cpu_bench_rows[1]),
+        "整数：未运行");
+    copy_text(g_cpu_bench_rows[2], sizeof(g_cpu_bench_rows[2]),
+        "浮点：未运行");
+    copy_text(g_cpu_bench_rows[3], sizeof(g_cpu_bench_rows[3]),
+        "内存：未运行");
+    copy_text(g_cpu_bench_rows[4], sizeof(g_cpu_bench_rows[4]),
+        "混合：未运行");
+    copy_text(g_cpu_bench_rows[5], sizeof(g_cpu_bench_rows[5]),
+        "耗时：未运行");
+    copy_text(g_status, sizeof(g_status),
+        "等待选择震动模式");
     g_cache_include_logs = 0u;
     g_cache_last_freed = 0u;
     g_busy = 0u;
@@ -3135,7 +3304,7 @@ int shellpp_ui_page_create(uint32_t page_index, void *descriptor, void *root) {
         g_cache_last_freed = 0u;
         refresh_cache_report();
     }
-    else if (page_index == PAGE_CPU &&
+    else if (page_index == PAGE_MEMORY &&
             (g_monitor_state & MONITOR_STATE_MEMORY_PAGE))
         (void)memory_sample();
     render_page(page_index);
@@ -3151,7 +3320,7 @@ int shellpp_ui_page_resume(uint32_t page_index, void *descriptor) {
         g_cache_last_freed = 0u;
         refresh_cache_report();
     }
-    else if (page_index == PAGE_CPU &&
+    else if (page_index == PAGE_MEMORY &&
             (g_monitor_state & MONITOR_STATE_MEMORY_PAGE))
         (void)memory_sample();
     render_page(page_index);
@@ -3161,6 +3330,7 @@ int shellpp_ui_page_resume(uint32_t page_index, void *descriptor) {
 int shellpp_ui_page_pause(uint32_t page_index) {
     if (page_index >= PAGE_COUNT || !g_ui[page_index].active) return -1;
     g_ui[page_index].interactive = 0u;
+    if (g_bindings_page == page_index) g_bindings_page = 0xffu;
     return 0;
 }
 
@@ -3170,6 +3340,7 @@ int shellpp_ui_page_destroy(uint32_t page_index) {
     if (page_index == PAGE_FILES && g_app_mode == APP_MODE_LIST)
         app_leave_list_mode();
     if (g_browser_owner == page_index) restore_cut();
+    if (g_bindings_page == page_index) g_bindings_page = 0xffu;
     generation = g_ui[page_index].generation;
     clear_bytes(&g_ui[page_index], sizeof(g_ui[page_index]));
     g_ui[page_index].generation = generation;
